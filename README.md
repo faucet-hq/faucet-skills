@@ -44,6 +44,8 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/faucet-hq/faucet-stream
 | [`faucet-debug`](skills/faucet-debug/SKILL.md) | Find out why a run failed, is slow or lagging, or wrote the wrong rows, using `doctor`, `status`, the dead-letter queue, state, metrics, `verify` and `rollback`. |
 | [`faucet-templates`](skills/faucet-templates/SKILL.md) | Run a Template Hub template, or write, test, version and publish one. |
 | [`faucet-connector`](skills/faucet-connector/SKILL.md) | Build a `faucet-source-*` or `faucet-sink-*` crate on `faucet-core` and pass the conformance battery. |
+| [`faucet-migrate`](skills/faucet-migrate/SKILL.md) | Move a Meltano, Singer or Airbyte setup to faucet: map each tap and target, bridge the rest through the Singer source, carry state over, and cut over after a side-by-side `faucet verify`. |
+| [`faucet-deploy`](skills/faucet-deploy/SKILL.md) | Run faucet in production: choose `run`, `schedule` or `serve`, set up auth and roles, Kubernetes and Helm, state backends, metrics and alerts, and hardening. |
 
 ## faucet MCP server
 

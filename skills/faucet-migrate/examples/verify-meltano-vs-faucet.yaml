@@ -1,0 +1,63 @@
+# Parallel-run comparison: the tables Meltano loaded (`raw`) against the tables
+# faucet loaded (`raw_faucet`), compared by content with `faucet verify`.
+#
+# This file is for `faucet verify` only. Never `faucet run` it: its "source" is
+# Meltano's output and its "sink" is faucet's table, so a run would copy
+# Meltano's rows into faucet's table and hide every difference.
+#
+# - Full-table queries, not the daily windows of app-db-to-postgres.yaml: a
+#   windowed source would report every row outside the window as "extra".
+# - email_hash is excluded because Meltano hashed with md5 and faucet with
+#   sha256; `_sdc_*` (Singer and faucet metadata) and `_faucet_*` columns too.
+#   Every other column present on either side is compared.
+# - Stop both pipelines (or compare a closed window) first: rows changing during
+#   the scan show up as differences.
+#
+#   export WAREHOUSE_PG_URL=...
+#   faucet verify verify-meltano-vs-faucet.yaml --row customers
+#   faucet verify verify-meltano-vs-faucet.yaml --row orders --json > orders-verify.json
+version: 1
+name: verify_meltano_vs_faucet
+
+pipeline:
+  sources:
+    meltano_raw:
+      type: postgres
+      config:
+        connection_url: "${env:WAREHOUSE_PG_URL}"
+        query: "SELECT 1"
+  sinks:
+    faucet_raw:
+      type: postgres
+      config:
+        connection_url: "${env:WAREHOUSE_PG_URL}"
+        schema: raw_faucet
+        table_name: placeholder
+        column_mapping: auto_map
+        write_mode: upsert
+        key: [id]
+        create_table: false
+
+verify:
+  after_run: false
+  exclude: ["_sdc_*", "_faucet_*", "email_hash"]
+  max_differences: 200
+
+matrix:
+  - id: customers
+    source:
+      ref: meltano_raw
+      config:
+        query: "SELECT id, name, country, created_at, updated_at FROM raw.customers"
+    sink:
+      ref: faucet_raw
+      config: { table_name: customers }
+
+  - id: orders
+    source:
+      ref: meltano_raw
+      config:
+        query: "SELECT id, customer_id, status, total_cents, created_at, updated_at FROM raw.orders"
+    sink:
+      ref: faucet_raw
+      config: { table_name: orders }

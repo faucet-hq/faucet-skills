@@ -1,0 +1,23 @@
+# `faucet serve --auth-config serve-auth.yaml`
+# Ship this file as a secret (Kubernetes Secret, mounted read-only); never commit real tokens.
+# faucet 1.13.2 reads `token` literally: a "${env:...}" string is NOT expanded and
+# becomes the token itself. Write generated values (e.g. `openssl rand -hex 32`).
+principals:
+  - name: platform-admin
+    token: "REPLACE_WITH_RANDOM_ADMIN_TOKEN"
+    role: admin
+  - name: airflow
+    token: "REPLACE_WITH_RANDOM_ORCHESTRATOR_TOKEN"
+    role: operator
+  - name: grafana
+    token: "REPLACE_WITH_RANDOM_DASHBOARD_TOKEN"
+    role: viewer
+
+# Only used when serve runs with `--require-approval run`.
+approvals:
+  expire_secs: 86400
+  rules:
+    - kinds: [run]
+      roles: [admin]
+      min_approvers: 1
+      self_approve: false

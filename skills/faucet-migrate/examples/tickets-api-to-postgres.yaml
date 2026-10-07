@@ -1,0 +1,70 @@
+# Converted from meltano.yml job `tickets-el`:
+#   tap-rest-api-msdk (stream `tickets`, replication_key updated_at) -> target-postgres
+#
+# - The tap's `api_url` + stream `path` become `base_url` + `path`; its
+#   `records_path` and `next_page_token_path` carry over as JSONPath.
+# - The bearer token stays in the environment. Meltano read it as
+#   TAP_REST_API_MSDK_BEARER_TOKEN; the same variable is referenced here.
+# - Meltano's bookmark carries over as `start_replication_value`, read from
+#   `meltano state get <state_id>` (bookmarks.tickets.replication_key_value).
+#   It applies only while faucet has no stored bookmark of its own.
+# - `replication_bind` assumes the API accepts `updated_since`; drop it if it
+#   does not and the filter stays client-side.
+#
+#   export TAP_REST_API_MSDK_BEARER_TOKEN=... WAREHOUSE_PG_URL=...
+#   faucet validate --no-secrets tickets-api-to-postgres.yaml
+#   faucet preview tickets-api-to-postgres.yaml --limit 10
+#   faucet schedule tickets-api-to-postgres.yaml
+version: 1
+name: tickets_api_to_postgres
+
+schedule:
+  cron: "0 * * * *"
+  timezone: UTC
+  overlap_policy: skip
+
+resilience:
+  retry:
+    max_attempts: 5
+    backoff: exponential
+  retry_on: [http_5xx, rate_limited, connection, timeout]
+
+pipeline:
+  source:
+    type: rest
+    config:
+      base_url: https://api.internal.example.com/v2
+      path: /tickets
+      auth:
+        type: bearer
+        config:
+          token: "${env:TAP_REST_API_MSDK_BEARER_TOKEN}"
+      records_path: "$.data[*]"
+      pagination:
+        type: Cursor
+        next_token_path: "$.meta.next_cursor"
+        param_name: cursor
+      primary_keys: [id]
+      replication_method:
+        type: Incremental
+      replication_key: updated_at
+      start_replication_value: "2026-10-06T23:58:12Z"
+      replication_bind:
+        into: query
+        name: updated_since
+        format: iso8601
+
+  sink:
+    type: postgres
+    config:
+      connection_url: "${env:WAREHOUSE_PG_URL}"
+      schema: raw_faucet
+      table_name: tickets
+      column_mapping: auto_map
+      write_mode: upsert
+      key: [id]
+
+  state:
+    type: file
+    config:
+      path: ./.faucet-state

@@ -1,0 +1,57 @@
+# Run with `faucet schedule scheduled-pipeline.yaml` (long-running) or
+# `faucet run scheduled-pipeline.yaml` from cron / Airflow / a Kubernetes CronJob
+# (`faucet run` ignores the schedule: block).
+version: 1
+name: orders-sync
+
+schedule:
+  cron: "*/15 * * * *"
+  timezone: UTC
+  overlap_policy: skip
+  on_failure: continue
+  max_consecutive_failures: 5
+  run_timeout_secs: 840
+  shutdown_grace_secs: 60
+
+observability:
+  prometheus:
+    # Unauthenticated endpoint: keep it on loopback, or bind 0.0.0.0 only
+    # inside a pod whose NetworkPolicy admits just Prometheus.
+    listen: "127.0.0.1:9464"
+
+pipeline:
+  source:
+    type: rest
+    config:
+      base_url: ${env:ORDERS_API_URL}
+      path: /v1/orders
+      auth:
+        type: bearer
+        config:
+          token: ${env:ORDERS_API_TOKEN}
+      pagination:
+        type: Cursor
+        next_token_path: $.next_page
+        param_name: starting_after
+      replication_method:
+        type: Incremental
+      replication_key: updated_at
+      primary_keys: [id]
+  sink:
+    type: postgres
+    config:
+      connection_url: ${env:WAREHOUSE_PG_URL}
+      table_name: orders_raw
+  dlq:
+    sink:
+      type: postgres
+      config:
+        connection_url: ${env:WAREHOUSE_PG_URL}
+        table_name: orders_dlq
+    max_failures_total: 1000
+  state:
+    type: postgres
+    config:
+      url: ${env:FAUCET_STATE_PG_URL}
+      table: faucet_state
+      ensure_table: true
