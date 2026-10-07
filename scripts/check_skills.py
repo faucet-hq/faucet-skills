@@ -3,6 +3,7 @@
 
 import argparse
 import functools
+import os
 import re
 import shlex
 import subprocess
@@ -116,7 +117,12 @@ class Cli:
 
 
 def validate(cli, path):
-    r = subprocess.run([cli.path, "validate", "--no-secrets", str(path)], capture_output=True, text=True)
+    env = dict(os.environ)
+    for var in re.findall(r"\$\{(?:env|secret):([A-Za-z_][A-Za-z0-9_]*)\}", Path(path).read_text()):
+        env.setdefault(var, "placeholder")
+    r = subprocess.run(
+        [cli.path, "validate", "--no-secrets", "--no-env-file", str(path)], capture_output=True, text=True, env=env
+    )
     return None if r.returncode == 0 else (r.stderr or r.stdout).strip().splitlines()[-1:]
 
 

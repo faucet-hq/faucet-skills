@@ -1,0 +1,63 @@
+# Postgres table -> Postgres mirror: one-time snapshot, then CDC.
+#
+# Run with `faucet mirror` (not `faucet run`): it captures the WAL position,
+# bulk-snapshots the table, then streams changes from that position, so there
+# is no gap and no duplicate. `cdc_unwrap` flattens the change envelope and
+# stamps `__op`; the sink's delete_marker turns `d` rows into deletes.
+#
+# Source prerequisites (once):
+#   wal_level = logical
+#   CREATE PUBLICATION orders_pub FOR TABLE public.orders;
+#
+#   faucet validate --no-secrets postgres-cdc-mirror.yaml
+#   faucet mirror postgres-cdc-mirror.yaml
+#   faucet mirror status postgres-cdc-mirror.yaml
+version: 1
+name: orders_mirror
+
+delivery: exactly_once
+
+pipeline:
+  source:
+    type: postgres-cdc
+    config:
+      connection_url: "${env:APP_PG_REPLICATION_URL}"
+      slot_name: faucet_orders_mirror
+      publication_name: orders_pub
+      create_slot_if_missing: true
+      slot_type: permanent
+
+  transforms:
+    - type: cdc_unwrap
+
+  schema:
+    on_drift: evolve
+    allow_type_widening: true
+    on_incompatible: fail
+
+  sink:
+    type: postgres
+    config:
+      connection_url: "${env:WAREHOUSE_PG_URL}"
+      table_name: orders_mirror
+      column_mapping: auto_map
+      write_mode: upsert
+      key: [id]
+      delete_marker: { field: __op, values: [d] }
+
+  state:
+    type: postgres
+    config:
+      url: "${env:FAUCET_STATE_URL}"
+      table: faucet_state
+      ensure_table: true
+
+mirror:
+  mode: snapshot_then_cdc
+  continuous: true
+  snapshot:
+    source:
+      type: postgres
+      config:
+        connection_url: "${env:APP_PG_URL}"
+        query: "SELECT * FROM public.orders"

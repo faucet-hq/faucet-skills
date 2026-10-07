@@ -1,0 +1,111 @@
+# REST API -> Postgres, incremental and keyed.
+#
+# - Reads only records changed since the stored bookmark (replication_key +
+#   replication_bind push the bookmark into the request as ?updated_since=...).
+# - Reshapes records, checks them, and quarantines bad rows to a DLQ file.
+# - Upserts by `id`, so a retried or replayed page converges instead of duplicating.
+# - Runs hourly under `faucet schedule`; `faucet run` ignores the schedule block.
+#
+#   faucet validate --no-secrets rest-incremental-to-postgres-upsert.yaml
+#   faucet explain rest-incremental-to-postgres-upsert.yaml
+#   faucet doctor rest-incremental-to-postgres-upsert.yaml
+#   faucet schedule rest-incremental-to-postgres-upsert.yaml
+version: 1
+name: customers_api_to_postgres
+
+schedule:
+  cron: "0 * * * *"
+  timezone: UTC
+  overlap_policy: skip
+  max_consecutive_failures: 5
+
+resilience:
+  retry:
+    max_attempts: 5
+    backoff: exponential
+  retry_on: [http_5xx, rate_limited, connection, timeout]
+
+pipeline:
+  source:
+    type: rest
+    config:
+      base_url: https://api.example.com/v1
+      path: /customers
+      auth:
+        type: bearer
+        config:
+          token: "${env:CUSTOMERS_API_TOKEN}"
+      query_params:
+        per_page: "200"
+      records_path: "$.data[*]"
+      pagination:
+        type: Cursor
+        next_token_path: "$.meta.next_cursor"
+        param_name: cursor
+      max_pages: 5000
+      replication_method:
+        type: Incremental
+      replication_key: updated_at
+      start_replication_value: "2024-01-01T00:00:00Z"
+      on_missing_key: keep
+      replication_bind:
+        into: query
+        name: updated_since
+        format: iso8601
+
+  transforms:
+    - type: flatten
+      config: { separator: "_" }
+    - type: keys_case
+      config: { mode: snake }
+    - type: select
+      config:
+        fields: [id, email, name, status, address_country, updated_at]
+    - type: value_case
+      config:
+        fields: [email]
+        mode: lower
+
+  quality:
+    record:
+      - type: not_null
+        field: id
+        on_failure: abort
+      - type: regex_match
+        field: email
+        pattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+        on_failure: quarantine
+      - type: value_in_set
+        field: status
+        values: [active, inactive, pending]
+        on_failure: quarantine
+    batch:
+      - type: unique
+        fields: [id]
+        on_failure: quarantine
+
+  dlq:
+    sink:
+      type: file
+      config:
+        path: ./dlq/customers.jsonl
+    on_batch_error: propagate
+    max_failures_per_page: 50
+    max_failures_total: 500
+
+  sink:
+    type: postgres
+    config:
+      connection_url: "${env:WAREHOUSE_PG_URL}"
+      schema: raw
+      table_name: customers
+      column_mapping: auto_map
+      write_mode: upsert
+      key: [id]
+      batch_size: 1000
+      max_connections: 5
+
+  state:
+    type: file
+    config:
+      path: ./.faucet-state

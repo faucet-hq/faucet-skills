@@ -1,0 +1,60 @@
+# Kafka topic -> Postgres append table, effectively-once.
+#
+# `delivery: exactly_once` takes the atomic-watermark path here: kafka is a
+# positional-replay source, postgres commits each page and its commit token in
+# one transaction, the state store is durable, and there is no `dlq:` block
+# (a DLQ is not allowed on this path). `faucet validate` prints the mechanism.
+#
+# The run drains until 30 s of silence, then exits; schedule it (or loop it
+# under a supervisor) and each run resumes from the committed offsets.
+#
+#   faucet validate --no-secrets kafka-to-postgres-exactly-once.yaml
+#   faucet doctor kafka-to-postgres-exactly-once.yaml
+#   faucet run kafka-to-postgres-exactly-once.yaml
+version: 1
+name: order_events_to_postgres
+
+delivery: exactly_once
+
+pipeline:
+  source:
+    type: kafka
+    config:
+      brokers: "broker-1.internal:9093,broker-2.internal:9093"
+      topics: [order-events]
+      group_id: faucet-order-events
+      auth:
+        type: sasl_scram
+        config:
+          mechanism: sha512
+          username: faucet
+          password: "${env:KAFKA_PASSWORD}"
+      value_format: { type: json }
+      auto_offset_reset: earliest
+      idle_timeout: 30
+      batch_size: 1000
+
+  transforms:
+    - type: keys_case
+      config: { mode: snake }
+    - type: set
+      config:
+        values: { ingest_source: kafka }
+
+  sink:
+    type: postgres
+    config:
+      connection_url: "${env:WAREHOUSE_PG_URL}"
+      schema: raw
+      table_name: order_events
+      column_mapping: auto_map
+      batch_size: 1000
+
+  state:
+    type: file
+    config:
+      path: ./.faucet-state
+
+observability:
+  prometheus:
+    listen: "127.0.0.1:9464"

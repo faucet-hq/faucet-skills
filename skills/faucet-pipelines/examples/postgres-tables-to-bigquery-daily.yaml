@@ -1,0 +1,99 @@
+# Several Postgres tables -> BigQuery, one matrix row per table, daily window.
+#
+# The postgres query source has no stored-bookmark mode, so each run reads a
+# time window scoped by `${now.*}`: a run on clock date D loads day D-1.
+# `faucet run --clock 2026-06-02` reloads June 1; `faucet backfill` sets the
+# clock to each window's start, so `--from 2026-06-02 --to 2026-07-01` reloads
+# June 1-29. Upsert by key makes every replay converge instead of duplicating.
+#
+# `orders` waits for `customers`, and `order_items` for `orders` (depends_on).
+# Selecting a dependent row alone fails unless you also select its ancestor or
+# pass `--include-parents eligible|all`.
+#
+#   faucet validate --no-secrets postgres-tables-to-bigquery-daily.yaml
+#   faucet explain postgres-tables-to-bigquery-daily.yaml
+#   faucet run postgres-tables-to-bigquery-daily.yaml --select customers
+#   faucet backfill postgres-tables-to-bigquery-daily.yaml --from 2026-06-02 --to 2026-07-01 --dry-run
+#   faucet schedule postgres-tables-to-bigquery-daily.yaml
+version: 1
+name: app_db_to_bigquery
+
+schedule:
+  cron: "15 1 * * *"
+  timezone: UTC
+  overlap_policy: skip
+
+backfill:
+  window: 1d
+  concurrency: 2
+  timezone: UTC
+
+execution:
+  max_concurrent: 3
+  on_error: continue
+
+sla:
+  max_staleness_secs: 129600
+  min_rows_per_run: 1
+
+pipeline:
+  sources:
+    app_db:
+      type: postgres
+      config:
+        connection_url: "${env:APP_PG_READONLY_URL}"
+        query: "SELECT 1"
+        max_connections: 4
+  sinks:
+    warehouse:
+      type: bigquery
+      config:
+        project_id: acme-analytics
+        dataset_id: app_raw
+        table_id: placeholder
+        auth:
+          type: service_account_key
+          config:
+            json: "${env:BIGQUERY_LOADER_KEY_JSON}"
+        location: US
+        write_mode: upsert
+  state:
+    type: file
+    config:
+      path: ./.faucet-state
+
+matrix:
+  - id: customers
+    source:
+      ref: app_db
+      config:
+        query: >-
+          SELECT id, email, country, created_at, updated_at FROM public.customers
+          WHERE updated_at >= '${now.date}'::date - 1 AND updated_at < '${now.date}'::date
+    sink:
+      ref: warehouse
+      config: { table_id: customers, key: [id] }
+
+  - id: orders
+    depends_on: [customers]
+    source:
+      ref: app_db
+      config:
+        query: >-
+          SELECT id, customer_id, status, total_cents, updated_at FROM public.orders
+          WHERE updated_at >= '${now.date}'::date - 1 AND updated_at < '${now.date}'::date
+    sink:
+      ref: warehouse
+      config: { table_id: orders, key: [id] }
+
+  - id: order_items
+    depends_on: [orders]
+    source:
+      ref: app_db
+      config:
+        query: >-
+          SELECT order_id, line_no, sku, quantity, updated_at FROM public.order_items
+          WHERE updated_at >= '${now.date}'::date - 1 AND updated_at < '${now.date}'::date
+    sink:
+      ref: warehouse
+      config: { table_id: order_items, key: [order_id, line_no] }
