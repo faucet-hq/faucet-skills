@@ -1,0 +1,97 @@
+# Converted from meltano.yml job `app-db-el`:
+#   tap-postgres (INCREMENTAL on updated_at) -> hash-emails mapper -> target-postgres
+#
+# Differences from the Meltano job, on purpose:
+# - The `postgres` query source keeps no bookmark (faucet-hq/faucet-stream#825).
+#   Each run reads a one-day window scoped by ${now.*}: a run on clock date D
+#   loads rows updated on D-1. History before the cutover comes from
+#   `faucet backfill`, not from Meltano's state.
+# - Upsert by `id`, so a re-run or an overlapping backfill window converges.
+# - Writes to `raw_faucet`, not Meltano's `raw`, for the parallel run.
+#   Point it at the final schema only at cutover.
+# - The mapper's md5(email) becomes the `hash` transform (sha256 by default),
+#   so email_hash values differ from Meltano's. Joins on email_hash must be
+#   rebuilt, or kept out of the verify comparison.
+# - `!public-customers.password_hash` becomes an explicit column list.
+# - target-postgres' `_sdc_*` columns become faucet metadata columns with the
+#   same prefix (`_sdc_extracted_at`, `_sdc_loaded_at`).
+#
+#   export APP_PG_READONLY_URL=... WAREHOUSE_PG_URL=...
+#   faucet validate --no-secrets app-db-to-postgres.yaml
+#   faucet doctor app-db-to-postgres.yaml
+#   faucet backfill app-db-to-postgres.yaml --row customers --from 2024-01-02 --to 2026-10-07 --dry-run
+#   faucet schedule app-db-to-postgres.yaml
+version: 1
+name: app_db_to_postgres
+
+schedule:
+  cron: "15 1 * * *"
+  timezone: UTC
+  overlap_policy: skip
+
+backfill:
+  window: 1d
+  concurrency: 2
+  timezone: UTC
+
+execution:
+  max_concurrent: 2
+  on_error: continue
+
+metadata_columns:
+  prefix: _sdc
+  columns: [extracted_at, loaded_at]
+
+pipeline:
+  sources:
+    app_db:
+      type: postgres
+      config:
+        connection_url: "${env:APP_PG_READONLY_URL}"
+        query: "SELECT 1"
+        max_connections: 4
+  sinks:
+    warehouse:
+      type: postgres
+      config:
+        connection_url: "${env:WAREHOUSE_PG_URL}"
+        schema: raw_faucet
+        table_name: placeholder
+        column_mapping: auto_map
+        write_mode: upsert
+        key: [id]
+  state:
+    type: file
+    config:
+      path: ./.faucet-state
+
+matrix:
+  - id: customers
+    source:
+      ref: app_db
+      config:
+        query: >-
+          SELECT id, email, name, country, created_at, updated_at FROM public.customers
+          WHERE updated_at >= '${now.date}'::date - 1 AND updated_at < '${now.date}'::date
+    transforms:
+      - type: hash
+        config:
+          fields: [email]
+          into: email_hash
+      - type: drop
+        config:
+          fields: [email]
+    sink:
+      ref: warehouse
+      config: { table_name: customers }
+
+  - id: orders
+    source:
+      ref: app_db
+      config:
+        query: >-
+          SELECT id, customer_id, status, total_cents, created_at, updated_at FROM public.orders
+          WHERE updated_at >= '${now.date}'::date - 1 AND updated_at < '${now.date}'::date
+    sink:
+      ref: warehouse
+      config: { table_name: orders }

@@ -1,0 +1,58 @@
+# A tap with no native faucet source or Template Hub template, run unchanged
+# through the experimental `singer` source and landed in Postgres.
+#
+# - The tap and its Python runtime must be installed on this machine
+#   (e.g. `pipx install tap-inhouse-erp`); faucet does not install plugins.
+# - Only the one `stream` below is emitted (v0 is single-stream). Write one
+#   config, or one matrix row, per stream you need.
+# - `catalog` must mark the stream selected, or most SDK and database taps
+#   sync nothing. `faucet init --source singer --discover --executable
+#   tap-inhouse-erp --stream invoices -o erp.yaml` writes a catalog like this.
+# - faucet saves the tap's STATE value as the bookmark, after the sink confirms
+#   the rows before it, and passes it back to the tap as `--state`. Meltano's
+#   state for this tap carries over with `faucet state set` (see
+#   references/state-carryover.md).
+# - Resume granularity is whatever the tap emits STATE for, and taps may
+#   re-send rows after a resume, so the sink upserts by key.
+#
+#   export TAP_INHOUSE_ERP_API_TOKEN=... WAREHOUSE_PG_URL=...
+#   faucet validate --no-secrets singer-bridge-to-postgres.yaml
+#   faucet run singer-bridge-to-postgres.yaml --limit 100
+version: 1
+name: erp_invoices
+
+pipeline:
+  source:
+    type: singer
+    config:
+      executable: tap-inhouse-erp
+      stream: invoices
+      tap_config:
+        api_url: https://erp.internal.example.com
+        api_token: "${env:TAP_INHOUSE_ERP_API_TOKEN}"
+        start_date: "2024-01-01T00:00:00Z"
+      catalog:
+        streams:
+          - tap_stream_id: invoices
+            stream: invoices
+            schema: { type: object }
+            metadata:
+              - breadcrumb: []
+                metadata: { selected: true }
+      idle_timeout_secs: 900
+      on_malformed: fail
+
+  sink:
+    type: postgres
+    config:
+      connection_url: "${env:WAREHOUSE_PG_URL}"
+      schema: raw_faucet
+      table_name: erp_invoices
+      column_mapping: auto_map
+      write_mode: upsert
+      key: [id]
+
+  state:
+    type: file
+    config:
+      path: ./.faucet-state

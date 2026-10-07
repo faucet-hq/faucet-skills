@@ -1,0 +1,63 @@
+# helm upgrade --install faucet oci://ghcr.io/faucet-hq/charts/faucet-stream \
+#   --version 1.13.2 -n data --create-namespace -f helm-values.yaml
+# Inputs created beforehand (never put tokens or DSNs in values files):
+#   kubectl create configmap orders-sync-config --from-file=pipeline.yaml=scheduled-pipeline.yaml
+#   kubectl create secret generic orders-sync-env --from-literal=WAREHOUSE_PG_URL=... (one key per ${env:VAR})
+#   kubectl create secret generic faucet-serve-auth --from-file=auth.yaml=serve-auth.yaml
+#   kubectl create secret generic faucet-serve-history --from-literal=FAUCET_HISTORY_URL=postgres://...
+
+image:
+  repository: ghcr.io/faucet-hq/faucet-stream
+  tag: 1.13.2-core
+
+connectors:
+  sources: [rest]
+  sinks: [postgres]
+
+envFrom:
+  - secretRef:
+      name: orders-sync-env
+
+# Shared by every pod the chart renders; serve expands it into --history below.
+env:
+  - name: FAUCET_HISTORY_URL
+    valueFrom:
+      secretKeyRef:
+        name: faucet-serve-history
+        key: FAUCET_HISTORY_URL
+
+pipelineConfig:
+  existingConfigMap: orders-sync-config
+  fileName: pipeline.yaml
+
+cronjob:
+  enabled: true
+  schedule: "*/15 * * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  extraArgs:
+    - --no-env-file
+    - --log-format=json
+
+serve:
+  enabled: true
+  replicaCount: 2
+  auth:
+    mode: rbac
+    existingSecret: faucet-serve-auth
+    existingSecretKey: auth.yaml
+  history:
+    backend: postgres
+    url: ""
+  cluster:
+    enabled: true
+  extraArgs:
+    - --history=$(FAUCET_HISTORY_URL)
+    - --max-concurrent-runs=4
+    - --log-format=json
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+serviceMonitor:
+  enabled: true
