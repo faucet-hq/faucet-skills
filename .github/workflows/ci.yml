@@ -25,3 +25,25 @@ jobs:
         run: python3 scripts/check_skills.py --faucet faucet
       - name: Manifests are valid JSON
         run: for f in .claude-plugin/*.json .codex-plugin/*.json .agents/plugins/*.json; do python3 -m json.tool "$f" >/dev/null; done
+
+  connector-examples:
+    name: Connector examples build and pass conformance
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [faucet-source-acme, faucet-sink-acme]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: skills/faucet-connector/examples/${{ matrix.crate }}
+      - name: Test
+        working-directory: skills/faucet-connector/examples/${{ matrix.crate }}
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test

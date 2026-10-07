@@ -1,0 +1,84 @@
+# Landing-zone CSV files -> S3 Parquet, new files only, PII masked, contract-checked.
+#
+# - `incremental: { by: name }` reads only files not seen on a previous run
+#   (needs the `state:` block); `stable_for_secs` skips files still being written.
+# - `masking:` runs before every other pass and before any write (DLQ included).
+# - `contract:` quarantines rows that break the promised output shape.
+# - Each run writes under a dated prefix (`${now.date}`).
+#
+#   faucet validate --no-secrets files-to-s3-parquet-masked.yaml
+#   faucet masking files-to-s3-parquet-masked.yaml
+#   faucet contract files-to-s3-parquet-masked.yaml
+#   faucet run files-to-s3-parquet-masked.yaml
+version: 1
+name: signups_to_lake
+
+pipeline:
+  source:
+    type: file
+    config:
+      path: "./landing/signups/*.csv"
+      format: csv
+      incremental: { by: name }
+      stable_for_secs: 60
+      csv:
+        delimiter: ","
+        has_headers: true
+
+  transforms:
+    - type: keys_case
+      config: { mode: snake }
+    - type: cast
+      config:
+        fields: { signup_id: string, plan_seats: int }
+        on_error: error
+
+  masking:
+    description: Customer PII never reaches the lake in clear text.
+    key: "${env:FAUCET_MASKING_KEY}"
+    rules:
+      - name: email
+        match: { value_detector: email }
+        action: { type: hash }
+      - name: phone
+        match: { field_pattern: '(?i)phone' }
+        action: { type: partial, keep_last: 4 }
+      - name: card
+        match: { value_detector: credit_card }
+        action: { type: redact }
+
+  contract:
+    version: "1.0.0"
+    owner: data-platform
+    on_breach: quarantine
+    allow_extra_fields: true
+    fields:
+      - name: signup_id
+        type: string
+        min_length: 1
+      - name: plan
+        type: string
+        enum: [free, team, enterprise]
+      - name: plan_seats
+        type: integer
+        min: 1
+
+  dlq:
+    sink:
+      type: file
+      config:
+        path: ./dlq/signups.jsonl
+
+  sink:
+    type: s3
+    config:
+      bucket: acme-data-lake
+      prefix: "raw/signups/dt=${now.date}/"
+      region: us-east-1
+      format: parquet
+      max_records_per_file: 500000
+
+  state:
+    type: file
+    config:
+      path: ./.faucet-state
