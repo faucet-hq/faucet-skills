@@ -26,10 +26,14 @@ codex plugin add faucet@faucet
 npx -y skills add faucet-hq/faucet-skills
 ```
 
-You also need the `faucet` CLI on your `PATH`:
+You also need the `faucet` CLI on your `PATH`. Install it with either:
 
 ```bash
+# Homebrew (macOS / Linux)
 brew install faucet-hq/faucet-stream/faucet-cli
+
+# Installer script (macOS / Linux)
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/faucet-hq/faucet-stream/releases/latest/download/faucet-cli-installer.sh | sh
 ```
 
 ## Skills
