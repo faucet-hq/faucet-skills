@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Catches CLI releases that rename a command or flag the skills mention.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Skills match the faucet CLI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the latest faucet CLI
+        run: |
+          curl --proto '=https' --tlsv1.2 -LsSf \
+            https://github.com/faucet-hq/faucet-stream/releases/latest/download/faucet-cli-installer.sh | sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - run: faucet --version
+      - name: Check skills
+        run: python3 scripts/check_skills.py --faucet faucet
+      - name: Manifests are valid JSON
+        run: for f in .claude-plugin/*.json .codex-plugin/*.json .agents/plugins/*.json; do python3 -m json.tool "$f" >/dev/null; done

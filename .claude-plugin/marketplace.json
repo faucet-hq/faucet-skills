@@ -1,0 +1,12 @@
+{
+  "name": "faucet",
+  "owner": { "name": "faucet-hq", "url": "https://faucet-hq.github.io" },
+  "metadata": { "description": "faucet-stream skills for coding agents." },
+  "plugins": [
+    {
+      "name": "faucet",
+      "source": "./",
+      "description": "Write and validate faucet pipeline configs, debug runs, use and publish Template Hub templates, and build connector crates."
+    }
+  ]
+}

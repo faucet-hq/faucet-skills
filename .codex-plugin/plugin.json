@@ -1,0 +1,20 @@
+{
+  "name": "faucet",
+  "version": "1.0.0",
+  "description": "Skills for writing, running and debugging faucet-stream data pipelines, Template Hub templates and connector crates.",
+  "author": { "name": "faucet-hq", "url": "https://faucet-hq.github.io" },
+  "homepage": "https://faucet-hq.github.io/faucet-stream/",
+  "repository": "https://github.com/faucet-hq/faucet-skills",
+  "license": "Apache-2.0",
+  "keywords": ["faucet", "faucet-stream", "data-pipelines", "etl", "cdc", "rust"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "faucet",
+    "shortDescription": "Move data with faucet-stream.",
+    "longDescription": "Skills for faucet-stream: author pipeline YAML that passes validation, diagnose failed, slow or lagging runs, compose and publish Template Hub templates, and implement faucet-source-* / faucet-sink-* crates.",
+    "developerName": "faucet-hq",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Write"],
+    "websiteURL": "https://faucet-hq.github.io"
+  }
+}
