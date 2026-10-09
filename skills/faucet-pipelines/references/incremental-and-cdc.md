@@ -7,12 +7,13 @@ always attach a durable `state:` block so the bookmark survives between runs.
 | Source | Mechanism | Keys |
 |---|---|---|
 | `rest`, `graphql` | Bookmark on a record field | `replication_method: { type: Incremental }`, `replication_key`, optional `start_replication_value`, `replication_bind`, `on_missing_key` |
+| `postgres`, `mysql` (faucet-cli 1.14+) | Bookmark on a column, lossless at ties | `replication: { type: incremental, column, initial_value }`; no placeholder needed |
 | `mssql`, `redshift`, `clickhouse`, `spanner`, `databricks` | Bookmark on a column | `replication: { type: incremental, column, initial_value }` plus the placeholder in the query |
 | `file` | New files since the last run | `incremental: { by: mtime }` or `{ by: name }` |
 | `iceberg` | New snapshots | `mode` (see schema) |
 | `kafka`, `kinesis` | Committed offsets / sequence numbers | `group_id` (kafka), `start_position` (kinesis) |
 | `postgres-cdc`, `mysql-cdc`, `mongodb-cdc`, `mssql-cdc`, `dynamodb` streams | Log position | The CDC source config; position kept in state |
-| `postgres`, `mysql`, `sqlite`, `duckdb`, `mongodb` (query) | None stored | Scope the query with `${now.*}`; replay with `faucet run --clock` or `faucet backfill` |
+| `sqlite`, `duckdb`, `mongodb` (query), `postgres`/`mysql` before 1.14 | None stored | Scope the query with `${now.*}`; replay with `faucet run --clock` or `faucet backfill` |
 
 ## REST / GraphQL bookmarks
 
@@ -55,6 +56,32 @@ injection-safe. Leave it out and the source still filters client-side but the
 server scans the whole table each run. `state_key` sets an explicit bookmark
 key; otherwise one is derived from the connection and query, so editing the
 query text can start a fresh bookmark.
+
+### postgres and mysql (faucet-cli 1.14+)
+
+```yaml
+source:
+  type: postgres
+  config:
+    connection_url: "postgres://faucet:faucet@localhost:5432/app"
+    query: "SELECT id, status, total, updated_at FROM public.orders"
+    replication:
+      type: incremental
+      column: updated_at
+      initial_value: "1970-01-01T00:00:00Z"
+state: { type: file, config: { path: ./.faucet-state } }
+```
+
+The source wraps the query itself (`… WHERE updated_at >= <bookmark> ORDER BY
+updated_at`), so no placeholder is required; to filter inside the query
+instead, use `${bookmark}` (postgres) or `@bookmark` (mysql) with `>=`, never
+`>` (validation refuses `>`). The bookmark keeps the last cursor value and a
+fingerprint of every row already written at it, so rows that share a timestamp
+are never skipped, a row committed late at the boundary value is picked up,
+and a crash replays at most one page. Index the cursor column. Rows with a
+NULL cursor are never read, and a row committed with a cursor *below* the
+stored bookmark (a long-running transaction) is not seen; use the CDC source
+when that matters.
 
 ## Query sources with no bookmark
 
