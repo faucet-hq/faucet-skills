@@ -85,10 +85,12 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/faucet-hq/faucet-stream
   top-level grammar is in `faucet schema config`.
 - **Prefer incremental over full re-reads.** Use the connector's bookmark mode
   where it has one: `replication_method` + `replication_key` (`rest`,
-  `graphql`), a `replication:` block (`mssql`, `redshift`, `clickhouse`,
-  `spanner`, `databricks`), `incremental:` (`file`), or a CDC source. Plain
-  query sources without one (e.g. `postgres`, `mysql`) are scoped with
-  `${now.*}` windows plus `faucet backfill`. See `references/incremental-and-cdc.md`.
+  `graphql`), a `replication:` block (`postgres` and `mysql` from faucet-cli
+  1.14, `mssql`, `redshift`, `clickhouse`, `spanner`, `databricks`),
+  `incremental:` (`file`), or a CDC source. Query sources without one (e.g.
+  `sqlite`, `duckdb`, and `postgres`/`mysql` before 1.14) are scoped with
+  `${now.*}` windows plus `faucet backfill`, which misses rows when a run is
+  skipped. See `references/incremental-and-cdc.md`.
 - **Incremental needs a durable `state:` block** (`file`, `redis` or
   `postgres`; `memory` forgets everything at exit). Without state there is no
   resume and every run starts over.
